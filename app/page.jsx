@@ -106,6 +106,9 @@ export default function Page() {
   const [error, setError] = useState(null);
   const [dismissed, setDismissed] = useState({});
   const [expanded, setExpanded] = useState({});
+  const [exploring, setExploring] = useState(false);
+  const [exploreResult, setExploreResult] = useState(null);
+  const [exploreError, setExploreError] = useState(null);
 
   // Loading step animator
   useEffect(() => {
@@ -123,11 +126,14 @@ export default function Page() {
     setError(null);
     setDismissed({});
     setExpanded({});
+    setExploreResult(null);
+    setExploreError(null);
   };
 
   const reset = () => {
     setResume(""); setJd(""); setHorizon("2wk");
     setResult(null); setError(null); setDismissed({}); setExpanded({});
+    setExploreResult(null); setExploreError(null);
   };
 
   const runDiagnosis = async () => {
@@ -161,6 +167,8 @@ export default function Page() {
       (data.diagnoses || []).forEach((_, i) => { if (i < 2) initialExpanded[i] = true; });
       setExpanded(initialExpanded);
       setResult(data);
+      setExploreResult(null);
+      setExploreError(null);
     } catch (e) {
       setError(`Couldn't complete diagnosis: ${e.message}`);
     } finally {
@@ -168,32 +176,61 @@ export default function Page() {
     }
   };
 
+  const exploreRoles = async () => {
+    setExploring(true);
+    setExploreError(null);
+    setExploreResult(null);
+    try {
+      const response = await fetch("/api/explore-roles", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ resume, jd, horizon, diagnoses: result?.diagnoses || [] }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || `Server returned ${response.status}`);
+      setExploreResult(data);
+    } catch (e) {
+      setExploreError(`Couldn't load adjacent roles: ${e.message}`);
+    } finally {
+      setExploring(false);
+    }
+  };
+
   const toggleDismiss = (i) => setDismissed((d) => ({ ...d, [i]: !d[i] }));
   const toggleExpand = (i) => setExpanded((d) => ({ ...d, [i]: !d[i] }));
+  const focusDiagnosis = (i) => {
+    setExpanded((d) => ({ ...d, [i]: true }));
+    if (typeof document !== "undefined") {
+      const el = document.getElementById(`diagnosis-card-${i}`);
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  };
 
   const diagnoses = result?.diagnoses || [];
   const activeCount = diagnoses.filter((_, i) => !dismissed[i]).length;
   const highConf = diagnoses.filter((d) => d.confidence === "high").length;
   const lowConf = diagnoses.filter((d) => d.confidence === "low").length;
 
-  // Roadmap: active (non-dismissed) cards, split by whether they fit the chosen horizon.
-  // Within each bucket, free fixes ranked first (equity surface).
-  const activeDiagnoses = diagnoses.filter((_, i) => !dismissed[i]);
+  // Roadmap: active (non-dismissed) cards grouped by fix horizon.
+  // Keep original diagnosis indexes so timeline chips can jump back to cards.
+  const activeDiagnosisEntries = diagnoses
+    .map((diagnosis, index) => ({ diagnosis, index }))
+    .filter(({ index }) => !dismissed[index]);
   const userRank = HORIZON_RANK[horizon] ?? 1;
-  const sortFreeFirst = (a, b) => {
-    if (a.access_cost === b.access_cost) return 0;
-    return a.access_cost === "free" ? -1 : 1;
+  const sortRoadmapEntries = (a, b) => {
+    if (a.diagnosis.access_cost !== b.diagnosis.access_cost) {
+      return a.diagnosis.access_cost === "free" ? -1 : 1;
+    }
+    return a.index - b.index;
   };
-  const inWindow = activeDiagnoses
-    .filter((d) => (HORIZON_RANK[d.time_to_fix] ?? 99) <= userRank);
-  const beyondWindow = activeDiagnoses
-    .filter((d) => (HORIZON_RANK[d.time_to_fix] ?? 99) > userRank);
-  const inWindowBuckets = BUCKET_ORDER
-    .map((b) => ({
-      bucket: b,
-      items: inWindow.filter((d) => d.time_to_fix === b).sort(sortFreeFirst),
-    }))
-    .filter((g) => g.items.length > 0);
+  const roadmapBuckets = BUCKET_ORDER.map((bucket) => ({
+    bucket,
+    fitsWindow: (HORIZON_RANK[bucket] ?? 99) <= userRank,
+    items: activeDiagnosisEntries
+      .filter(({ diagnosis }) => diagnosis.time_to_fix === bucket)
+      .sort(sortRoadmapEntries),
+  }));
+  const roadmapHasItems = roadmapBuckets.some(({ items }) => items.length > 0);
 
   return (
     <div
@@ -285,7 +322,7 @@ export default function Page() {
                 ))}
               </div>
               <div className="text-xs text-stone-500 mt-2">
-                Affects which fixes we suggest. Honest about what's actually achievable in this window.
+                Sets your current window. Each fix still goes in the bucket where it honestly belongs.
               </div>
             </div>
 
@@ -334,7 +371,7 @@ export default function Page() {
                 <LoadingStep done={loadingStep > 0} active={loadingStep === 0} text="Reading your resume" />
                 <LoadingStep done={loadingStep > 1} active={loadingStep === 1} text="Comparing to role expectations" />
                 <LoadingStep done={loadingStep > 2} active={loadingStep === 2} text="Identifying gaps · ranking by impact" />
-                <LoadingStep done={loadingStep > 3} active={loadingStep === 3} text="Calibrating fixes to your horizon" />
+                <LoadingStep done={loadingStep > 3} active={loadingStep === 3} text="Placing fixes by honest time-to-fix" />
               </div>
             )}
 
@@ -371,6 +408,14 @@ export default function Page() {
                   </div>
                 )}
 
+                {diagnoses.length > 0 && (
+                  <EffortImpactPlot
+                    diagnoses={diagnoses}
+                    dismissed={dismissed}
+                    onDotClick={focusDiagnosis}
+                  />
+                )}
+
                 {diagnoses.map((d, i) => {
                   const dis = dismissed[i];
                   const exp = expanded[i];
@@ -378,7 +423,8 @@ export default function Page() {
                   return (
                     <div
                       key={i}
-                      className={`border border-stone-300 bg-white/60 rounded-sm transition-all ${dis ? "opacity-40" : ""}`}
+                      id={`diagnosis-card-${i}`}
+                      className={`border border-stone-300 bg-white/60 rounded-sm transition-all scroll-mt-10 ${dis ? "opacity-40" : ""}`}
                     >
                       <button
                         onClick={() => toggleExpand(i)}
@@ -457,7 +503,7 @@ export default function Page() {
                   );
                 })}
 
-                {(inWindowBuckets.length > 0 || beyondWindow.length > 0) && (
+                {roadmapHasItems && (
                   <div className="border-t border-stone-300 pt-8 mt-4 space-y-5">
                     <div className="flex items-baseline justify-between flex-wrap gap-2">
                       <div className="flex items-center gap-2">
@@ -467,75 +513,185 @@ export default function Page() {
                         </h2>
                       </div>
                       <div className="text-xs text-stone-600">
-                        Calibrated to {(HORIZONS.find((h) => h.id === horizon)?.label || "").toLowerCase()}
+                        Current window: {(HORIZONS.find((h) => h.id === horizon)?.label || "").toLowerCase()}
                       </div>
                     </div>
+                    <div className="text-sm text-stone-600 leading-relaxed">
+                      Fixes stay in their real time bucket. Your selected window only marks what fits now.
+                    </div>
 
-                    {inWindowBuckets.length > 0 && (
-                      <div className="space-y-5">
-                        <div className="text-xs uppercase tracking-[0.15em] text-stone-700 font-medium">
-                          What fits in this window
-                        </div>
-                        {inWindowBuckets.map(({ bucket, items }) => (
-                          <div key={bucket} className="space-y-2">
-                            <div className="text-[11px] uppercase tracking-wider text-stone-500">
-                              {BUCKET_LABELS[bucket]}
+                    <div className="border border-stone-300 bg-white/40 rounded-sm p-5">
+                      <div className="relative grid grid-cols-4 gap-3">
+                        <div className="absolute left-[12.5%] right-[12.5%] top-6 h-px bg-stone-300" />
+                        {roadmapBuckets.map(({ bucket, fitsWindow, items }) => (
+                          <div
+                            key={bucket}
+                            className={`relative min-w-0 rounded-sm border p-3 ${
+                              fitsWindow
+                                ? "border-stone-400 bg-white/70"
+                                : "border-stone-200 bg-stone-50/70"
+                            }`}
+                          >
+                            <div className="relative z-10 flex items-start justify-between gap-2 mb-4">
+                              <div>
+                                <div
+                                  className={`mx-auto mb-2 h-3 w-3 rounded-full border-2 ${
+                                    fitsWindow
+                                      ? "border-stone-900 bg-stone-900"
+                                      : "border-stone-300 bg-white"
+                                  }`}
+                                />
+                                <div className="text-[11px] uppercase tracking-wider text-stone-500">
+                                  {BUCKET_LABELS[bucket]}
+                                </div>
+                              </div>
+                              <span
+                                className={`text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full border ${
+                                  fitsWindow
+                                    ? "bg-emerald-50 text-emerald-800 border-emerald-200"
+                                    : "bg-stone-100 text-stone-600 border-stone-300"
+                                }`}
+                              >
+                                {fitsWindow ? "In window" : "After window"}
+                              </span>
                             </div>
-                            <ol className="space-y-2">
-                              {items.map((d, i) => (
-                                <li
-                                  key={`${bucket}-${i}`}
-                                  className="border border-stone-300 bg-white/60 rounded-sm p-3 flex gap-3"
-                                >
-                                  <div className="flex-1 min-w-0">
-                                    <div className="text-sm font-medium leading-snug text-stone-900">
-                                      {d.issue}
-                                    </div>
-                                    <div className="text-xs text-stone-600 mt-1 leading-relaxed">
-                                      {d.fix}
-                                    </div>
-                                  </div>
-                                  <span
-                                    className={`text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full self-start flex-shrink-0 border ${
-                                      d.access_cost === "free"
-                                        ? "bg-emerald-50 text-emerald-800 border-emerald-200"
-                                        : "bg-amber-50 text-amber-900 border-amber-200"
-                                    }`}
-                                  >
-                                    {d.access_cost}
-                                  </span>
-                                </li>
-                              ))}
-                            </ol>
+
+                            <div className="space-y-2">
+                              {items.length === 0 ? (
+                                <div className="min-h-[72px] rounded-sm border border-dashed border-stone-200 bg-white/40 px-3 py-4 text-xs text-stone-400">
+                                  No active fix here
+                                </div>
+                              ) : (
+                                items.map(({ diagnosis, index }) => {
+                                  const isFree = diagnosis.access_cost === "free";
+                                  return (
+                                    <button
+                                      key={`${bucket}-${index}`}
+                                      onClick={() => focusDiagnosis(index)}
+                                      className={`w-full rounded-sm border p-2.5 text-left transition-colors ${
+                                        fitsWindow
+                                          ? isFree
+                                            ? "border-emerald-300 bg-emerald-50/70 hover:border-emerald-700"
+                                            : "border-amber-300 bg-amber-50/70 hover:border-amber-700"
+                                          : "border-stone-200 bg-white/50 text-stone-600 hover:border-stone-400"
+                                      }`}
+                                    >
+                                      <div className="flex items-center justify-between gap-2">
+                                        <span
+                                          className={`inline-flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full text-xs font-semibold ${
+                                            fitsWindow
+                                              ? "bg-stone-900 text-stone-50"
+                                              : "bg-stone-200 text-stone-700"
+                                          }`}
+                                        >
+                                          {index + 1}
+                                        </span>
+                                        <span
+                                          className={`text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full border ${
+                                            isFree
+                                              ? "bg-white text-emerald-800 border-emerald-200"
+                                              : "bg-white text-amber-900 border-amber-200"
+                                          }`}
+                                        >
+                                          {diagnosis.access_cost}
+                                        </span>
+                                      </div>
+                                      <div className="mt-2 text-xs font-medium leading-snug text-stone-900">
+                                        {diagnosis.issue}
+                                      </div>
+                                      {!fitsWindow && (
+                                        <div className="mt-1 text-[11px] text-stone-500">
+                                          Needs more time than your selected window
+                                        </div>
+                                      )}
+                                    </button>
+                                  );
+                                })
+                              )}
+                            </div>
                           </div>
                         ))}
                       </div>
-                    )}
-
-                    {beyondWindow.length > 0 && (
-                      <div className="space-y-2 pt-3 border-t border-stone-200">
-                        <div className="text-xs uppercase tracking-[0.15em] text-stone-500 font-medium">
-                          Doesn't fit this window — schedule for later
-                        </div>
-                        <ul className="space-y-1.5 text-sm text-stone-600">
-                          {beyondWindow.map((d, i) => (
-                            <li key={i} className="flex gap-2">
-                              <span className="text-stone-400 mt-0.5">·</span>
-                              <span>
-                                <span className="text-stone-800">{d.issue}</span>
-                                <span className="text-stone-500"> — needs {(BUCKET_LABELS[d.time_to_fix] || d.time_to_fix).toLowerCase()}</span>
-                              </span>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
+                    </div>
 
                     <div className="text-[11px] text-stone-500 italic pt-1">
-                      Reacts to your dismissals. Disagreeing with a diagnosis above removes it from this plan.
+                      Click any number to open the full diagnosis. Dismissed items disappear; time estimates do not shrink to fit the window.
                     </div>
                   </div>
                 )}
+
+                <div className="border-t border-stone-300 pt-8 mt-4 space-y-4">
+                  <div className="flex items-baseline justify-between flex-wrap gap-3">
+                    <h2 style={{ fontFamily: "'Fraunces', serif", fontWeight: 500 }} className="text-3xl">
+                      Adjacent role families
+                    </h2>
+                    {!exploreResult && !exploring && (
+                      <button
+                        onClick={exploreRoles}
+                        className="px-4 py-2 text-xs font-medium tracking-wide uppercase border border-stone-900 hover:bg-stone-900 hover:text-stone-50 transition-colors rounded-sm"
+                      >
+                        Show me adjacent roles
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-sm text-stone-600 leading-relaxed">
+                    Roles that fit your strengths in different shapes — <em>not</em> easier targets, <em>not</em> a fallback. Your original target stays your target.
+                  </p>
+
+                  {exploring && (
+                    <div className="border border-stone-300 bg-white/40 p-5 rounded-sm flex items-center gap-3 text-sm">
+                      <Loader2 size={16} className="animate-spin text-stone-700" />
+                      <span className="text-stone-700">Looking for role shapes that match your strengths...</span>
+                    </div>
+                  )}
+
+                  {exploreError && (
+                    <div className="border border-red-300 bg-red-50/60 p-4 rounded-sm flex gap-3 text-sm">
+                      <AlertCircle size={18} className="text-red-700 flex-shrink-0 mt-0.5" />
+                      <div className="text-red-900">{exploreError}</div>
+                    </div>
+                  )}
+
+                  {exploreResult && (
+                    <div className="space-y-4">
+                      {exploreResult.original_target_reachable && (
+                        <div className="border-l-2 border-emerald-700 bg-emerald-50/40 px-4 py-3 text-sm text-emerald-950 italic leading-relaxed">
+                          {exploreResult.original_target_reachable}
+                        </div>
+                      )}
+                      {Array.isArray(exploreResult.adjacent_roles) && exploreResult.adjacent_roles.map((r, i) => {
+                        const conf = CONFIDENCE_STYLES[r.confidence] || CONFIDENCE_STYLES.medium;
+                        return (
+                          <div key={i} className="border border-stone-300 bg-white/60 rounded-sm p-4">
+                            <div className="flex items-start justify-between gap-3 mb-2 flex-wrap">
+                              <div
+                                style={{ fontFamily: "'Fraunces', serif", fontWeight: 500 }}
+                                className="text-lg leading-snug flex-1 min-w-0"
+                              >
+                                {r.role_family}
+                              </div>
+                              <span className={`inline-flex items-center gap-1.5 text-[10px] uppercase tracking-wider px-2 py-0.5 border rounded-full self-start flex-shrink-0 ${conf.pill}`}>
+                                <span className={`w-1.5 h-1.5 rounded-full ${conf.dot}`} />
+                                {conf.label}
+                              </span>
+                            </div>
+                            <div className="text-sm text-stone-700 leading-relaxed mb-1.5">
+                              <span className="text-[10px] uppercase tracking-[0.15em] text-stone-500 mr-1.5">Why fit:</span>
+                              {r.why_fit}
+                            </div>
+                            <div className="text-sm text-stone-600 leading-relaxed">
+                              <span className="text-[10px] uppercase tracking-[0.15em] text-stone-500 mr-1.5">Shape diff:</span>
+                              {r.shape_difference}
+                            </div>
+                          </div>
+                        );
+                      })}
+                      <div className="text-[11px] text-stone-500 italic">
+                        Exploration suggestions, not redirects. The diagnosis above is still your map to the original target.
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </div>
@@ -622,6 +778,124 @@ function LoadingStep({ done, active, text }) {
       <span className={done ? "text-stone-900" : active ? "text-stone-900 font-medium" : "text-stone-500"}>
         {text}
       </span>
+    </div>
+  );
+}
+
+function EffortImpactPlot({ diagnoses, dismissed, onDotClick }) {
+  // Plot area: viewBox 800x360. Padding leaves room for axis labels.
+  const padL = 80, padR = 30, padT = 30, padB = 70;
+  const W = 800, H = 360;
+  const plotW = W - padL - padR;
+  const plotH = H - padT - padB;
+  const midX = padL + plotW / 2;
+  const midY = padT + plotH / 2;
+
+  const colWidth = plotW / 4;
+  const xForBucket = (idx) => padL + colWidth * idx + colWidth / 2;
+  const yForRank = (rank, total) =>
+    total <= 1 ? padT + plotH / 2 : padT + (rank - 1) * (plotH / (total - 1));
+
+  const FILL = { high: "#047857", medium: "#d97706", low: "#78716c" };
+  const total = diagnoses.length;
+
+  return (
+    <div className="border border-stone-300 bg-white/40 rounded-sm p-5">
+      <div className="flex items-baseline justify-between flex-wrap gap-2 mb-2">
+        <div className="text-xs uppercase tracking-[0.15em] text-stone-700 font-medium">
+          Effort vs likely impact
+        </div>
+        <div className="text-[11px] text-stone-500 italic">
+          Click a number to jump to that diagnosis
+        </div>
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ maxHeight: 380 }}>
+        {/* Quadrant tints */}
+        <rect x={padL} y={padT} width={plotW / 2} height={plotH / 2} fill="#10b981" opacity="0.06" />
+        <rect x={midX} y={midY} width={plotW / 2} height={plotH / 2} fill="#78716c" opacity="0.05" />
+
+        {/* Quadrant labels */}
+        <text x={padL + 12} y={padT + 18} fontSize="11" fill="#065f46" opacity="0.85" style={{ letterSpacing: "0.1em", textTransform: "uppercase" }}>
+          Quick wins
+        </text>
+        <text x={W - padR - 12} y={H - padB - 8} fontSize="11" fill="#57534e" opacity="0.7" textAnchor="end" style={{ letterSpacing: "0.1em", textTransform: "uppercase" }}>
+          Defer
+        </text>
+
+        {/* Crosshair */}
+        <line x1={padL} y1={midY} x2={W - padR} y2={midY} stroke="#d6d3d1" strokeDasharray="2,3" />
+        <line x1={midX} y1={padT} x2={midX} y2={H - padB} stroke="#d6d3d1" strokeDasharray="2,3" />
+
+        {/* Axes */}
+        <line x1={padL} y1={H - padB} x2={W - padR} y2={H - padB} stroke="#a8a29e" />
+        <line x1={padL} y1={padT} x2={padL} y2={H - padB} stroke="#a8a29e" />
+
+        {/* X-axis bucket labels */}
+        {BUCKET_ORDER.map((bucket, i) => (
+          <text
+            key={bucket}
+            x={xForBucket(i)}
+            y={H - padB + 18}
+            textAnchor="middle"
+            fontSize="11"
+            fill="#44403c"
+          >
+            {BUCKET_LABELS[bucket]}
+          </text>
+        ))}
+
+        {/* Axis titles */}
+        <text x={midX} y={H - 12} textAnchor="middle" fontSize="11" fill="#78716c" fontStyle="italic">
+          Effort to fix →
+        </text>
+        <text
+          x={20}
+          y={midY}
+          textAnchor="middle"
+          fontSize="11"
+          fill="#78716c"
+          fontStyle="italic"
+          transform={`rotate(-90, 20, ${midY})`}
+        >
+          ↑ Higher impact
+        </text>
+
+        {/* Dots */}
+        {diagnoses.map((d, i) => {
+          const bucketIdx = BUCKET_ORDER.indexOf(d.time_to_fix);
+          if (bucketIdx === -1) return null;
+          const x = xForBucket(bucketIdx);
+          const y = yForRank(i + 1, total);
+          const isDismissed = dismissed[i];
+          const fill = FILL[d.confidence] || FILL.medium;
+          return (
+            <g
+              key={i}
+              onClick={() => onDotClick && onDotClick(i)}
+              style={{ cursor: "pointer", opacity: isDismissed ? 0.3 : 1 }}
+            >
+              <title>{`#${i + 1} ${d.issue} — ${d.confidence}-confidence, fits in ${BUCKET_LABELS[d.time_to_fix] || d.time_to_fix}`}</title>
+              <circle cx={x} cy={y} r="13" fill={fill} stroke="#fafaf9" strokeWidth="2.5" />
+              <text
+                x={x}
+                y={y + 4}
+                textAnchor="middle"
+                fontSize="11"
+                fontWeight="600"
+                fill="#fafaf9"
+                pointerEvents="none"
+              >
+                {i + 1}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+      <div className="flex flex-wrap gap-3 mt-3 text-[10px] uppercase tracking-wider text-stone-600">
+        <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full" style={{ background: "#047857" }} />High</span>
+        <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full" style={{ background: "#d97706" }} />Medium</span>
+        <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full" style={{ background: "#78716c" }} />Low (speculative)</span>
+      </div>
     </div>
   );
 }
