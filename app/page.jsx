@@ -4,6 +4,7 @@ import React, { useState, useEffect } from "react";
 import {
   FileText, Briefcase, Loader2, AlertCircle, CheckCircle2,
   MinusCircle, ChevronDown, ChevronUp, RotateCcw, Info, UserRound,
+  Calendar,
 } from "lucide-react";
 
 // ============================================================================
@@ -84,6 +85,17 @@ const CATEGORY_LABELS = {
   framing: "Resume framing",
 };
 
+const HORIZON_RANK = { weekend: 0, "2wk": 1, "1mo": 2, "3mo": 3 };
+
+const BUCKET_LABELS = {
+  weekend: "This weekend",
+  "2wk": "Next two weeks",
+  "1mo": "This month",
+  "3mo": "Next three months",
+};
+
+const BUCKET_ORDER = ["weekend", "2wk", "1mo", "3mo"];
+
 export default function Page() {
   const [resume, setResume] = useState("");
   const [jd, setJd] = useState("");
@@ -163,6 +175,25 @@ export default function Page() {
   const activeCount = diagnoses.filter((_, i) => !dismissed[i]).length;
   const highConf = diagnoses.filter((d) => d.confidence === "high").length;
   const lowConf = diagnoses.filter((d) => d.confidence === "low").length;
+
+  // Roadmap: active (non-dismissed) cards, split by whether they fit the chosen horizon.
+  // Within each bucket, free fixes ranked first (equity surface).
+  const activeDiagnoses = diagnoses.filter((_, i) => !dismissed[i]);
+  const userRank = HORIZON_RANK[horizon] ?? 1;
+  const sortFreeFirst = (a, b) => {
+    if (a.access_cost === b.access_cost) return 0;
+    return a.access_cost === "free" ? -1 : 1;
+  };
+  const inWindow = activeDiagnoses
+    .filter((d) => (HORIZON_RANK[d.time_to_fix] ?? 99) <= userRank);
+  const beyondWindow = activeDiagnoses
+    .filter((d) => (HORIZON_RANK[d.time_to_fix] ?? 99) > userRank);
+  const inWindowBuckets = BUCKET_ORDER
+    .map((b) => ({
+      bucket: b,
+      items: inWindow.filter((d) => d.time_to_fix === b).sort(sortFreeFirst),
+    }))
+    .filter((g) => g.items.length > 0);
 
   return (
     <div
@@ -425,6 +456,86 @@ export default function Page() {
                     </div>
                   );
                 })}
+
+                {(inWindowBuckets.length > 0 || beyondWindow.length > 0) && (
+                  <div className="border-t border-stone-300 pt-8 mt-4 space-y-5">
+                    <div className="flex items-baseline justify-between flex-wrap gap-2">
+                      <div className="flex items-center gap-2">
+                        <Calendar size={18} className="text-stone-700" strokeWidth={1.5} />
+                        <h2 style={{ fontFamily: "'Fraunces', serif", fontWeight: 500 }} className="text-3xl">
+                          Your roadmap
+                        </h2>
+                      </div>
+                      <div className="text-xs text-stone-600">
+                        Calibrated to {(HORIZONS.find((h) => h.id === horizon)?.label || "").toLowerCase()}
+                      </div>
+                    </div>
+
+                    {inWindowBuckets.length > 0 && (
+                      <div className="space-y-5">
+                        <div className="text-xs uppercase tracking-[0.15em] text-stone-700 font-medium">
+                          What fits in this window
+                        </div>
+                        {inWindowBuckets.map(({ bucket, items }) => (
+                          <div key={bucket} className="space-y-2">
+                            <div className="text-[11px] uppercase tracking-wider text-stone-500">
+                              {BUCKET_LABELS[bucket]}
+                            </div>
+                            <ol className="space-y-2">
+                              {items.map((d, i) => (
+                                <li
+                                  key={`${bucket}-${i}`}
+                                  className="border border-stone-300 bg-white/60 rounded-sm p-3 flex gap-3"
+                                >
+                                  <div className="flex-1 min-w-0">
+                                    <div className="text-sm font-medium leading-snug text-stone-900">
+                                      {d.issue}
+                                    </div>
+                                    <div className="text-xs text-stone-600 mt-1 leading-relaxed">
+                                      {d.fix}
+                                    </div>
+                                  </div>
+                                  <span
+                                    className={`text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full self-start flex-shrink-0 border ${
+                                      d.access_cost === "free"
+                                        ? "bg-emerald-50 text-emerald-800 border-emerald-200"
+                                        : "bg-amber-50 text-amber-900 border-amber-200"
+                                    }`}
+                                  >
+                                    {d.access_cost}
+                                  </span>
+                                </li>
+                              ))}
+                            </ol>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {beyondWindow.length > 0 && (
+                      <div className="space-y-2 pt-3 border-t border-stone-200">
+                        <div className="text-xs uppercase tracking-[0.15em] text-stone-500 font-medium">
+                          Doesn't fit this window — schedule for later
+                        </div>
+                        <ul className="space-y-1.5 text-sm text-stone-600">
+                          {beyondWindow.map((d, i) => (
+                            <li key={i} className="flex gap-2">
+                              <span className="text-stone-400 mt-0.5">·</span>
+                              <span>
+                                <span className="text-stone-800">{d.issue}</span>
+                                <span className="text-stone-500"> — needs {(BUCKET_LABELS[d.time_to_fix] || d.time_to_fix).toLowerCase()}</span>
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    <div className="text-[11px] text-stone-500 italic pt-1">
+                      Reacts to your dismissals. Disagreeing with a diagnosis above removes it from this plan.
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
