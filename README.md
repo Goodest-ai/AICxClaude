@@ -24,7 +24,7 @@ Click **"Try with example"** to load sample data, then **"Run diagnosis"**. If y
 
 ## Demo video
 
-[Watch the 90-second Loom demo](https://www.loom.com/share/ba4acb014b074dabb9ecd8f8689dac1a)
+[Watch the Loom demo](https://www.loom.com/share/ba4acb014b074dabb9ecd8f8689dac1a)
 
 ---
 
