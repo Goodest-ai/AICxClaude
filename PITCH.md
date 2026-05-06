@@ -107,6 +107,8 @@ Also permanently visible:
 
 ## Demo script (90 seconds)
 
+[Recorded demo video](https://www.loom.com/share/ba4acb014b074dabb9ecd8f8689dac1a)
+
 ```
 [0-15s] HOOK
 Two resumes. Same skills. Different college names.
@@ -160,7 +162,7 @@ Thanks.
 
 - [ ] Demo URL works in incognito browser, fresh device
 - [ ] README in repo (this file) has: problem, persona, what AI does, harms + mitigations
-- [ ] Backup demo video uploaded somewhere (YouTube unlisted, 60-90 sec)
+- [x] Backup demo video uploaded somewhere: https://www.loom.com/share/ba4acb014b074dabb9ecd8f8689dac1a
 - [ ] Deck PDF + Google Slides link both work
 - [ ] Persona doc + harm scenarios visible in repo (optional: paste this README)
 - [ ] One screenshot of real student feedback (Reddit quote / DM screenshot) in repo
