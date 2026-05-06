@@ -318,6 +318,28 @@ export default function Page() {
                   </div>
                 </div>
 
+                {Array.isArray(result.whats_working) && result.whats_working.length > 0 && (
+                  <div className="border border-emerald-300 bg-emerald-50/60 p-5 rounded-sm">
+                    <div className="flex items-center gap-2 mb-3">
+                      <CheckCircle2 size={15} className="text-emerald-700" />
+                      <div className="text-xs uppercase tracking-[0.15em] text-emerald-900 font-medium">
+                        What's already working
+                      </div>
+                    </div>
+                    <ul className="text-sm space-y-2 text-emerald-950 leading-relaxed">
+                      {result.whats_working.map((item, i) => (
+                        <li key={i} className="flex gap-2">
+                          <span className="text-emerald-600 mt-1">·</span>
+                          <span>{item}</span>
+                        </li>
+                      ))}
+                    </ul>
+                    <div className="text-[11px] text-emerald-800/70 mt-3 italic">
+                      Don't lose these. Keep them on the resume; the gaps below are what's missing on top of these.
+                    </div>
+                  </div>
+                )}
+
                 {diagnoses.map((d, i) => {
                   const dis = dismissed[i];
                   const exp = expanded[i];
@@ -381,6 +403,16 @@ export default function Page() {
                               </span>
                             </div>
                           </div>
+                          {d.reasoning && (
+                            <div className="bg-stone-100/70 border border-stone-200 p-4 rounded-sm">
+                              <div className="text-[10px] uppercase tracking-[0.15em] text-stone-500 mb-1">
+                                How we figured this out
+                              </div>
+                              <div className="text-sm leading-relaxed text-stone-700 italic">
+                                {d.reasoning}
+                              </div>
+                            </div>
+                          )}
                           <button
                             onClick={() => toggleDismiss(i)}
                             className="text-xs text-stone-500 hover:text-stone-900 underline underline-offset-2 transition-colors flex items-center gap-1.5"

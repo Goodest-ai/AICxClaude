@@ -48,11 +48,15 @@ OUTPUT FORMAT — return ONLY valid JSON, no markdown fences, no commentary:
       "issue": "short title, max 60 chars",
       "category": "skills | projects | signals | framing",
       "why_it_matters": "1-2 sentences explaining why this likely causes filter/rejection for THIS role",
+      "reasoning": "1-2 sentence trace of how you reached this — name what in the resume AND what in the JD pointed you here. Concrete, not generic.",
       "confidence": "high | medium | low",
       "fix": "specific actionable fix in 1-2 sentences",
       "time_to_fix": "weekend | 2wk | 1mo | 3mo",
       "access_cost": "free | paid"
     }
+  ],
+  "whats_working": [
+    "list of 2-3 specific strengths in the resume that already hit this role's signals. Cite the project/skill/achievement directly (e.g. '150+ LeetCode hits the DSA fundamentals requirement'). Empty array is acceptable if nothing in the resume meaningfully aligns."
   ],
   "cannot_diagnose": [
     "list of 2-4 things you cannot judge from resume text alone (e.g. interview performance, communication skill, cultural fit)"
